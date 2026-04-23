@@ -16,7 +16,7 @@
 //! Neither `main.rs` nor any other file outside `tinyusb_hid.rs` contains an
 //! `unsafe` block — the FFI is fully encapsulated there.
 
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 use std::time::Duration;
@@ -121,31 +121,83 @@ fn run_tcp_server(port: u16) -> anyhow::Result<()> {
     }
 }
 
-fn handle_client(stream: TcpStream) -> io::Result<()> {
+fn handle_client(mut stream: TcpStream) -> io::Result<()> {
+    // Note: we deliberately do NOT call `stream.try_clone()` to split the
+    // socket into a separate reader/writer. ESP-IDF's lwIP does not implement
+    // `dup(2)`, so `try_clone` fails with ENOSYS ("Function not implemented").
+    // Single-byte reads on the shared `stream` are slower in theory but
+    // perfectly fine for a human-typed command protocol.
     stream.set_nodelay(true).ok();
-    let mut writer = stream.try_clone()?;
-    let reader = BufReader::new(stream);
+    writeln!(&mut stream, "ok hello — send 'help' for commands")?;
 
-    writeln!(writer, "ok hello — send 'help' for commands")?;
+    let mut line_buffer = Vec::with_capacity(64);
+    loop {
+        line_buffer.clear();
+        match read_line(&mut stream, &mut line_buffer)? {
+            ReadLine::Eof => return Ok(()),
+            ReadLine::TooLong => {
+                writeln!(&mut stream, "err line too long")?;
+                continue;
+            }
+            ReadLine::Line => {}
+        }
 
-    for line in reader.lines() {
-        let line = match line {
-            Ok(line) => line,
-            Err(error) => return Err(error),
+        let line = match std::str::from_utf8(&line_buffer) {
+            Ok(s) => s.trim(),
+            Err(_) => {
+                writeln!(&mut stream, "err invalid utf-8")?;
+                continue;
+            }
         };
-        if line.len() > MAX_COMMAND_BYTES {
-            writeln!(writer, "err line too long")?;
-            continue;
-        }
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
+        if line.is_empty() {
             continue;
         }
 
-        let reply = handle_line(trimmed);
-        writeln!(writer, "{reply}")?;
+        let reply = handle_line(line);
+        writeln!(&mut stream, "{reply}")?;
     }
-    Ok(())
+}
+
+enum ReadLine {
+    Line,
+    Eof,
+    TooLong,
+}
+
+/// Read until `\n` or EOF into `buffer` (excluding the newline). `\r` is
+/// stripped so clients sending `\r\n` (Windows telnet) still work.
+fn read_line(stream: &mut TcpStream, buffer: &mut Vec<u8>) -> io::Result<ReadLine> {
+    let mut byte = [0_u8; 1];
+    loop {
+        match stream.read(&mut byte)? {
+            0 if buffer.is_empty() => return Ok(ReadLine::Eof),
+            0 => return Ok(ReadLine::Line),
+            _ => match byte[0] {
+                b'\n' => return Ok(ReadLine::Line),
+                b'\r' => continue,
+                byte => {
+                    if buffer.len() >= MAX_COMMAND_BYTES {
+                        // Drain the rest of the line so we resync to the next
+                        // newline, then report the overflow to the caller.
+                        drain_until_newline(stream)?;
+                        return Ok(ReadLine::TooLong);
+                    }
+                    buffer.push(byte);
+                }
+            },
+        }
+    }
+}
+
+fn drain_until_newline(stream: &mut TcpStream) -> io::Result<()> {
+    let mut byte = [0_u8; 1];
+    loop {
+        match stream.read(&mut byte)? {
+            0 => return Ok(()),
+            _ if byte[0] == b'\n' => return Ok(()),
+            _ => {}
+        }
+    }
 }
 
 /// Parse one line, execute it against the HID bridge, and return a single-line

@@ -212,3 +212,17 @@ inputs, not C files directly. Force a re-run with:
 rm target/xtensa-esp32s3-espidf/release/build/esp-idf-sys-*/output
 cargo build -r
 ```
+
+**Build fails with `partitions.csv ... missing and no known rule to make it`.**
+`CONFIG_PARTITION_TABLE_CUSTOM_FILENAME` is resolved relative to the ESP-IDF
+build output directory, not the project root, so the CSV has to be copied in
+by the Rust build. This template already does that via the following lines in
+`.cargo/config.toml`:
+
+```toml
+[env]
+ESP_IDF_GLOB_FIRMWARE_BASE = { value = "", relative = true }
+ESP_IDF_GLOB_FIRMWARE_PARTITIONS = "partitions.csv"
+```
+
+If you rename the CSV or move it, update the second line to match.
