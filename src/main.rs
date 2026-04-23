@@ -52,7 +52,7 @@ fn main() -> anyhow::Result<()> {
         .parse()
         .map_err(|e| anyhow::anyhow!("invalid TCP_PORT '{BUILT_TCP_PORT}': {e}"))?;
     log::info!(
-        "esp32-s3-hid-example starting (SSID='{}', TCP port={})",
+        "esp32-rust-c-hid-example starting (SSID='{}', TCP port={})",
         BUILT_WIFI_SSID,
         tcp_port,
     );

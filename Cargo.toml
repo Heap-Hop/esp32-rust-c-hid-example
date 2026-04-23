@@ -3,14 +3,14 @@
 # Cargo workspace when used as a starting point inside a larger repo.
 
 [package]
-name = "esp32-s3-hid-example"
+name = "esp32-rust-c-hid-example"
 version = "0.1.0"
 edition = "2021"
 resolver = "2"
 rust-version = "1.82"
 
 [[bin]]
-name = "esp32-s3-hid-example"
+name = "esp32-rust-c-hid-example"
 harness = false
 
 [profile.release]

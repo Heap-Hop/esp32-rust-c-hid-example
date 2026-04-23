@@ -1,4 +1,4 @@
-# esp32-s3-hid-example
+# esp32-rust-c-hid-example
 
 End-to-end example of driving a [TinyUSB](https://github.com/hathach/tinyusb) HID
 device (keyboard + mouse + media keys) on an ESP32-S3 over a plain-text TCP
@@ -66,8 +66,8 @@ cargo espflash flash --release --monitor
 The serial monitor logs the assigned IP once Wi-Fi is up:
 
 ```
-I (...) esp32_s3_hid_example: Wi-Fi connected: IpInfo { ip: 192.168.1.42, ... }
-I (...) esp32_s3_hid_example: TCP HID command server listening on 0.0.0.0:9000
+I (...) esp32_rust_c_hid_example: Wi-Fi connected: IpInfo { ip: 192.168.1.42, ... }
+I (...) esp32_rust_c_hid_example: TCP HID command server listening on 0.0.0.0:9000
 ```
 
 ## Command protocol

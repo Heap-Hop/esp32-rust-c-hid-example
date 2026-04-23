@@ -39,7 +39,7 @@ static const uint8_t s_hid_report_descriptor[] = {
  */
 static const char *s_hid_string_descriptor[] = {
     (char[]){0x09, 0x04},
-    "esp32-s3-hid-example",
+    "esp32-rust-c-hid-example",
     "ESP32-S3 HID Demo",
     "esp32s3-hid-demo",
     "HID Interface",
