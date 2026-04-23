@@ -13,6 +13,19 @@ build-std = ["std", "panic_abort"]
 [env]
 MCU = "esp32s3"
 ESP_IDF_VERSION = "v5.5.3"
-# "fromenv" reuses the ESP-IDF toolchain you sourced with export.sh instead of
-# downloading a fresh copy into the target dir.
 ESP_IDF_TOOLS_INSTALL_DIR = "global"
+
+# Copy the custom partition table into the esp-idf build output directory
+# (required because CONFIG_PARTITION_TABLE_CUSTOM_FILENAME resolves relative
+# to that output dir, not the project root).
+ESP_IDF_GLOB_FIRMWARE_BASE = { value = "", relative = true }
+ESP_IDF_GLOB_FIRMWARE_PARTITIONS = "partitions.csv"
+
+# When espressif/esp_tinyusb is added as a remote component, esp-idf-sys
+# emits -DESP_IDF_COMP_ESPRESSIF__ESP_TINYUSB_ENABLED to its bindgen clang
+# pass. That macro makes ESP-IDF umbrella headers pull in TinyUSB headers,
+# which produce type conflicts against bindings esp-idf-sys has already
+# generated. The -U flag undefines the macro before bindgen processes any
+# header, preventing the conflict. bindgen 0.61+ reads this env var via its
+# Rust API, so esp-idf-sys's build script picks it up from here.
+BINDGEN_EXTRA_CLANG_ARGS = "-UESP_IDF_COMP_ESPRESSIF__ESP_TINYUSB_ENABLED"

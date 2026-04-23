@@ -1,0 +1,5 @@
+idf_component_register(
+    SRCS "tinyusb_bridge.c"
+    INCLUDE_DIRS "include"
+    REQUIRES espressif__esp_tinyusb
+)

@@ -22,17 +22,19 @@ opt-level = "z"
 
 [dependencies]
 log = "0.4"
+anyhow = "1"
 esp-idf-sys = "0.37.2"
 esp-idf-svc = { version = "0.52.1", features = ["critical-section"] }
 
 [build-dependencies]
 embuild = "0.33"
 
-# Tell embuild to compile local C components under components/.
-# To add a remote component from the ESP-IDF Component Registry, add a second
-# [[package.metadata.esp-idf-sys.extra_components]] block:
-#
-#   [[package.metadata.esp-idf-sys.extra_components]]
-#   remote_component = { name = "espressif/some_component", version = "^1.0.0" }
+# Local C components under components/ (our TinyUSB bridge).
 [[package.metadata.esp-idf-sys.extra_components]]
 component_dirs = ["components"]
+
+# Remote ESP-IDF component pulled by idf-component-manager at build time.
+# The TinyUSB bridge requires it; the bridge CMakeLists.txt REQUIRES
+# espressif__esp_tinyusb to link against it.
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/esp_tinyusb", version = "^2.0.0" }

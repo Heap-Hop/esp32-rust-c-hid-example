@@ -1,194 +1,214 @@
 # esp32-s3-hid-example
 
-> Generated from [esp32-rust-c-template](https://github.com/Heap-Hop/esp32-rust-c-template). To start a new project from the same template:
-> ```bash
-> cargo install cargo-generate
-> cargo generate --git https://github.com/Heap-Hop/esp32-rust-c-template --name my-firmware
-> ```
+End-to-end example of driving a [TinyUSB](https://github.com/hathach/tinyusb) HID
+device (keyboard + mouse + media keys) on an ESP32-S3 over a plain-text TCP
+protocol. Any client that can open a TCP socket — including `nc` — can type on
+the host computer, move the mouse, and send media keys.
 
-Minimal starting point for ESP32-S3 firmware written in Rust with C components linked via hand-written FFI.
+Generated from [esp32-rust-c-template](https://github.com/Heap-Hop/esp32-rust-c-template).
+It demonstrates how to layer a hand-written, fully safe Rust API on top of a
+non-trivial remote ESP-IDF component (`espressif/esp_tinyusb`).
 
-The split this template is built around:
+## Hardware
 
-- **Rust** handles application logic: networking, protocols, state machines, error handling.
-- **C** handles anything that is easier or only available as a C library: drivers, USB stacks, vendor SDKs, remote ESP-IDF components.
+Any ESP32-S3 board with a dedicated **native USB port** (the pins labelled
+`D+`/`D-` or `USB` — GPIO19/GPIO20). Plug that port into the computer that you
+want the ESP32-S3 to act as a HID device for.
 
-The FFI boundary is declared by hand in `src/main.rs`. For small, stable C APIs this is simpler than a bindgen step and keeps the `unsafe` surface area reviewable.
+Notes:
 
-## Prerequisites
+- On boards with two USB-C connectors, one is the USB-Serial/JTAG port (used
+  for flashing and `cargo espflash`) and the other is the native USB peripheral
+  (used by the HID device). Use the right one for the right job.
+- On single-port boards (e.g. AtomS3R) the one port is switched between modes.
+  Flash in bootloader mode, then press reset — when the firmware runs the same
+  port acts as the HID device. `--monitor` is not available in HID mode.
 
-Install the Rust ESP toolchain once:
+## Setup
+
+Install the Rust ESP toolchain once (see the template README for full
+instructions). Briefly:
 
 ```bash
 cargo install espup ldproxy espflash cargo-espflash
 espup install
-```
-
-If you have [cargo-binstall](https://github.com/cargo-bins/cargo-binstall), use it instead to download pre-built binaries and skip compilation:
-
-```bash
-cargo binstall espup ldproxy espflash cargo-espflash
-espup install
-```
-
-`espup install` writes `$HOME/export-esp.sh` and handles the Xtensa toolchain. ESP-IDF itself is downloaded automatically on the first build (see below).
-
-## Per-shell setup
-
-Source the Rust ESP environment before every build session:
-
-```bash
 . $HOME/export-esp.sh
 ```
 
-ESP-IDF does **not** need to be sourced manually — this template sets `ESP_IDF_TOOLS_INSTALL_DIR = "global"` in `.cargo/config.toml`, so the first `cargo build` downloads ESP-IDF into `~/.espressif/` automatically and reuses it for all subsequent builds.
+ESP-IDF `v5.5.3` is downloaded automatically on the first build.
 
-The pinned version is `v5.5.3`. To use a different version, edit `.cargo/config.toml`:
+## Build-time configuration
 
-```toml
-ESP_IDF_VERSION = "v5.5.3"
+Three environment variables are read by `build.rs` and baked into the firmware:
+
+| Variable         | Required | Default | Meaning                                    |
+|------------------|----------|---------|--------------------------------------------|
+| `WIFI_SSID`      | yes      | —       | Network SSID (2.4 GHz, WPA2-Personal)      |
+| `WIFI_PASSWORD`  | no       | empty   | Leave empty for open networks              |
+| `TCP_PORT`       | no       | `9000`  | TCP port the HID command server listens on |
+
+Export them in your shell before building:
+
+```bash
+export WIFI_SSID="my-wifi"
+export WIFI_PASSWORD="my-password"
+# export TCP_PORT=9000
 ```
+
+The build is cached per value — changing any of them triggers a rebuild.
 
 ## Build and flash
 
 ```bash
-cargo build -r
 cargo espflash flash --release --monitor
 ```
 
-`cargo espflash flash --release --monitor` rebuilds the release image itself before flashing, so the explicit `cargo build -r` step is only needed if you want to compile without flashing.
+The serial monitor logs the assigned IP once Wi-Fi is up:
+
+```
+I (...) esp32_s3_hid_example: Wi-Fi connected: IpInfo { ip: 192.168.1.42, ... }
+I (...) esp32_s3_hid_example: TCP HID command server listening on 0.0.0.0:9000
+```
+
+## Command protocol
+
+Send one command per line over TCP. Tokens are separated by whitespace, case
+is ignored for verbs and key names, and each command replies with a single
+line starting with `ok` or `err`.
+
+```
+key  <name>                   tap a key
+k    <name>                   short alias for `key`
+
+mouse <dx> <dy>               relative mouse movement, -127..127 per axis
+m     <dx> <dy>
+
+click [left|right|middle]     mouse button click, default left
+c     [left|right|middle]
+
+media <name>                  consumer-control key tap
+md    <name>
+
+help                          list commands
+```
+
+### Supported key names
+
+- Single character: letters `a`..`z` (case-insensitive), digits `0`..`9`.
+- Named:  `enter` / `return`, `esc` / `escape`, `backspace`, `tab`, `space`,
+  `left`, `right`, `up`, `down`.
+
+### Supported media names
+
+`play`, `pause`, `playpause`, `next`, `prev` / `previous`, `stop`, `mute`,
+`volup`, `voldown`.
+
+## Testing with `nc`
+
+Open a TCP session and type commands interactively:
+
+```
+$ nc 192.168.1.42 9000
+ok hello — send 'help' for commands
+k a
+ok key a
+k enter
+ok key enter
+mouse 50 -20
+ok mouse 50 -20
+click right
+ok click right
+md volup
+ok media volup
+md playpause
+ok media playpause
+```
+
+Or stream a prepared script:
+
+```bash
+printf 'k h\nk i\nk enter\n' | nc -q1 192.168.1.42 9000
+```
+
+The ESP32-S3's native USB port must be connected to a host computer — that is
+the computer whose keyboard / mouse the commands control.
+
+## How it works
+
+### C side: `components/tinyusb_bridge/`
+
+A thin C component that:
+
+- Declares the HID report descriptor (boot keyboard + mouse + consumer control
+  on three distinct report IDs). These are built with TinyUSB macros that are
+  awkward to expand in Rust, so that portion stays in C.
+- Implements `tud_hid_descriptor_report_cb` (required by TinyUSB at
+  enumeration time).
+- Exposes a small bindgen-friendly C API (`tinyusb_bridge_*`) over the
+  otherwise-complex TinyUSB submission calls, including retry loops that wait
+  for the HID endpoint to become ready.
+
+### Rust side
+
+`src/tinyusb_hid.rs` wraps the C API:
+
+- `mod ffi { unsafe extern "C" { ... } }` contains every `extern "C"` — this
+  is the only `unsafe` surface in the binary.
+- Public functions return `Result<(), EspError>`, use
+  `esp_idf_sys::esp!(...)` to convert status codes, and serialise calls via a
+  single process-wide `Mutex`.
+- The TinyUSB weak-symbol callbacks `tud_hid_get_report_cb` and
+  `tud_hid_set_report_cb` are implemented in Rust with `#[no_mangle] extern
+  "C"`. No extra C stub is needed for them.
+
+`src/protocol.rs` parses the text commands into a strongly typed `Command`
+enum. It has unit tests — run them on the host with `cargo test --target
+$(rustc -vV | grep host | cut -d' ' -f2) --lib` (the build target is
+Xtensa, tests need a host target).
+
+`src/main.rs` wires everything together — link patches, logger, TinyUSB init,
+Wi-Fi, TCP listener, per-client handler thread. It contains **zero** `unsafe`
+blocks.
 
 ## Project layout
 
 ```
-.cargo/config.toml          target chip, linker, build-std, ESP-IDF version
-Cargo.toml                  Rust deps + component_dirs declaration
-build.rs                    single embuild call (required)
-sdkconfig.defaults          stack sizes (Rust needs more than C defaults)
-rust-toolchain.toml         pins the esp Xtensa toolchain channel
+.cargo/config.toml          target chip, linker, ESP-IDF version, BINDGEN flags
+Cargo.toml                  Rust deps + local + remote extra_components
+build.rs                    embuild output + WIFI_SSID/WIFI_PASSWORD/TCP_PORT
+sdkconfig.defaults          stack sizes, TinyUSB HID count, partition table
+partitions.csv              custom 3 MB factory app partition
+espflash.toml               points espflash at partitions.csv
+
 src/
-  main.rs                   application entry point — no unsafe
-  c_example.rs              safe Rust wrapper around the C component
+  main.rs                   application entry — no unsafe
+  tinyusb_hid.rs            FFI wrapper (the ONLY unsafe in the project)
+  protocol.rs               text command parser + HID usage tables
+
 components/
-  c_example/
-    CMakeLists.txt          registers the component with ESP-IDF
-    include/c_example.h     public API (must be bindgen-safe)
-    c_example.c             implementation
+  tinyusb_bridge/
+    CMakeLists.txt          requires espressif__esp_tinyusb
+    include/tinyusb_bridge.h
+    tinyusb_bridge.c        HID descriptor + submission helpers
 ```
 
-## How to add a local C component
+## Troubleshooting
 
-1. Create `components/<your_component>/` with a `CMakeLists.txt`, a header under `include/`, and a `.c` file.
+**Device never appears as a HID on the host.** Check the USB cable — some are
+charge-only. Confirm the ESP32-S3 native USB port is plugged in, not the
+USB-Serial port. Linux: `dmesg | tail` and `lsusb` should show a new device
+with VID/PID from TinyUSB's defaults.
 
-   Minimal `CMakeLists.txt`:
-   ```cmake
-   idf_component_register(
-       SRCS "your_component.c"
-       INCLUDE_DIRS "include"
-       REQUIRES some_idf_component   # optional
-   )
-   ```
+**`err mouse: ESP_FAIL` (or similar) on every command.** The HID interface is
+not mounted yet. Wait a few seconds after boot, or re-plug the USB cable.
 
-2. Keep the public header bindgen-safe: use only `stdint.h` integer types, `bool`, `esp_err_t`, and plain pointers. No C++ features, no complex macros, no non-standard extensions.
+**`WIFI_SSID must be set before building firmware` at compile time.** Export
+the env var in your shell and re-run `cargo build`.
 
-3. Create `src/<your_component>.rs` with a private `ffi` block and safe public wrappers:
-
-   ```rust
-   use esp_idf_sys::EspError;
-
-   mod ffi {
-       use esp_idf_sys::esp_err_t;
-       unsafe extern "C" {
-           pub fn your_component_init() -> esp_err_t;
-           pub fn your_component_do(arg: i32) -> i32;
-       }
-   }
-
-   pub fn init() -> Result<(), EspError> {
-       esp_idf_sys::esp!(unsafe { ffi::your_component_init() })
-   }
-
-   pub fn do_thing(arg: i32) -> i32 {
-       unsafe { ffi::your_component_do(arg) }
-   }
-   ```
-
-4. In `src/main.rs`, declare the module and call the safe API — no `unsafe` needed:
-
-   ```rust
-   mod your_component;
-
-   // in main():
-   your_component::init().expect("init failed");
-   let result = your_component::do_thing(42);
-   ```
-
-No changes to `Cargo.toml` are needed for local components — `component_dirs = ["components"]` already covers the whole directory.
-
-## How to add a remote component (ESP-IDF Component Registry)
-
-Remote components are downloaded by `idf-component-manager` at build time.
-
-1. Add an entry in `Cargo.toml`:
-   ```toml
-   [[package.metadata.esp-idf-sys.extra_components]]
-   remote_component = { name = "espressif/mdns", version = "^1.2" }
-   ```
-
-2. Write a thin C bridge in `components/` that wraps the remote component and exposes a bindgen-safe header. The remote component's own headers often use constructs that conflict with the bindings `esp-idf-sys` already generated; the bridge layer isolates Rust from that.
-
-3. In the bridge `CMakeLists.txt`, reference the downloaded component by its `vendor__name` form:
-   ```cmake
-   idf_component_register(
-       SRCS "mdns_bridge.c"
-       INCLUDE_DIRS "include"
-       REQUIRES espressif__mdns
-   )
-   ```
-
-4. Declare the bridge functions in Rust as usual.
-
-For a complete worked example of adding a non-trivial remote component — including bindgen header conflicts, `#[no_mangle]` callbacks in Rust, and a custom partition table — see the [reference project](#reference-a-fully-built-project-on-top-of-this-template) below.
-
-## Troubleshooting: C source changes not picked up
-
-Cargo tracks build script inputs, not C source files directly. If you edit a
-`.c` file in `components/` and `cargo build` does not recompile it, force a
-rebuild by deleting the esp-idf-sys build script output:
+**C source changes in `components/` not picked up.** Cargo tracks build script
+inputs, not C files directly. Force a re-run with:
 
 ```bash
 rm target/xtensa-esp32s3-espidf/release/build/esp-idf-sys-*/output
 cargo build -r
 ```
-
-Cargo will re-run the build script, which re-invokes CMake/Ninja and recompiles
-the changed component.
-
-`cargo clean` also works but discards the entire incremental cache (slow first
-rebuild). The `output`-deletion approach is surgical and only re-runs the C
-build step.
-
-## Targeting a different chip
-
-This template is wired for ESP32-S3. To retarget, edit `.cargo/config.toml`:
-
-| Chip      | `target`                    | `MCU`     |
-|-----------|-----------------------------|-----------|
-| ESP32     | `xtensa-esp32-espidf`       | `esp32`   |
-| ESP32-S2  | `xtensa-esp32s2-espidf`     | `esp32s2` |
-| ESP32-C3  | `riscv32imc-esp-espidf`     | `esp32c3` |
-| ESP32-C6  | `riscv32imac-esp-espidf`    | `esp32c6` |
-| ESP32-H2  | `riscv32imac-esp-espidf`    | `esp32h2` |
-
-The next `cargo build` will automatically download the correct toolchain for the new chip.
-
-## Reference: a fully-built project on top of this template
-
-For a complete end-to-end example that adds Wi-Fi, a TCP command protocol, and
-a TinyUSB HID bridge on top of this template, see:
-
-> _(link to reference project — fill in once published)_
-
-That project demonstrates the C-bridge pattern for a non-trivial remote
-component (`espressif/esp_tinyusb`), a custom partition table, and
-build-time configuration via environment variables.
