@@ -88,14 +88,14 @@ pub fn consumer_release() -> Result<(), EspError> {
 //
 // TinyUSB declares `tud_hid_get_report_cb` and `tud_hid_set_report_cb` as weak
 // C symbols and requires the application to provide them somewhere in the
-// final binary. `#[no_mangle] extern "C"` makes the Rust functions visible to
+// final binary. `#[unsafe(no_mangle)] extern "C"` makes the Rust functions visible to
 // the linker at the same symbol names, so no extra C stub is needed.
 //
 // We do not currently support host-initiated GET/SET reports (e.g. keyboard
 // LED state). Returning 0 / doing nothing is safe: the USB host treats it as
 // "no data" and the bridge still functions as an output-only device.
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 unsafe extern "C" fn tud_hid_get_report_cb(
     _instance: u8,
     _report_id: u8,
@@ -106,7 +106,7 @@ unsafe extern "C" fn tud_hid_get_report_cb(
     0
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 unsafe extern "C" fn tud_hid_set_report_cb(
     _instance: u8,
     _report_id: u8,
