@@ -1,9 +1,9 @@
 # esp32-rust-c-hid-example
 
 End-to-end example of driving a [TinyUSB](https://github.com/hathach/tinyusb) HID
-device (keyboard + mouse + media keys) on an ESP32-S3 over a plain-text UDP
-protocol. Any client that can open a UDP socket — including `nc` — can type on
-the host computer, move the mouse, and send media keys.
+device (keyboard + mouse + media keys) on an ESP32-S3. The firmware accepts a
+compact binary command protocol over UDP and replays each command as a USB HID
+report on the host computer it is plugged into.
 
 Generated from [esp32-rust-c-template](https://github.com/Heap-Hop/esp32-rust-c-template).
 It demonstrates how to layer a hand-written, fully safe Rust API on top of a
@@ -77,62 +77,34 @@ I (...) esp32_rust_c_hid_example: UDP HID command server listening on 0.0.0.0:90
 
 ## Command protocol
 
-Send one command per line over UDP. Tokens are separated by whitespace, case
-is ignored for verbs and key names, and each command replies with a single
-line starting with `ok` or `err`.
+Send one command per UDP datagram. The wire format is a fixed binary header
+followed by an opcode-specific payload — see [`src/protocol.rs`](src/protocol.rs)
+for the canonical definition. All datagrams are fire-and-forget except `PING`,
+which the firmware answers with a matching `PONG`.
 
 ```
-key  <name>                   tap a key
-k    <name>                   short alias for `key`
+header   [0]  magic    0x48 ('H')        — quick filter for stray traffic
+         [1]  version  0x01              — protocol version
+         [2]  opcode
 
-mouse <dx> <dy>               relative mouse movement, -127..127 per axis
-m     <dx> <dy>
-
-click [left|right|middle]     mouse button click, default left
-c     [left|right|middle]
-
-media <name>                  consumer-control key tap
-md    <name>
-
-help                          list commands
+op    name           payload                          notes
+0x01  KEY_TAP        u8 modifier, u8 keycode          press + small hold + release
+0x02  KEY_DOWN       u8 modifier, u8 keycode          press, no release (for chording)
+0x03  KEY_UP         (none)                           release whatever is held
+0x10  MOUSE_MOVE     i8 dx, i8 dy, i8 wheel           relative; wheel reserved (this fw ignores)
+0x11  MOUSE_CLICK    u8 button_mask                   down + small hold + up
+0x12  MOUSE_BUTTONS  u8 button_mask                   raw button state (for drags)
+0x20  MEDIA_TAP      u16 le usage_code                consumer-control key tap
+0xf0  PING           u32 le seq                       app → fw
+0xf1  PONG           u32 le seq                       fw → app reply (magic is lowercase 'h')
 ```
 
-### Supported key names
+`modifier` and `keycode` follow HID Usage Page 0x07 (Keyboard); `button_mask`
+is the standard HID Mouse mask (bit 0 = left, bit 1 = right, bit 2 = middle);
+`usage_code` is HID Usage Page 0x0c (Consumer Control).
 
-- Single character: letters `a`..`z` (case-insensitive), digits `0`..`9`.
-- Named:  `enter` / `return`, `esc` / `escape`, `backspace`, `tab`, `space`,
-  `left`, `right`, `up`, `down`.
-
-### Supported media names
-
-`play`, `pause`, `playpause`, `next`, `prev` / `previous`, `stop`, `mute`,
-`volup`, `voldown`.
-
-## Testing with `nc`
-
-Open a UDP session and type commands interactively (`-u` for UDP):
-
-```
-$ nc -u 192.168.1.42 9000
-k a
-ok key a
-k enter
-ok key enter
-mouse 50 -20
-ok mouse 50 -20
-click right
-ok click right
-md volup
-ok media volup
-md playpause
-ok media playpause
-```
-
-Or stream a prepared script:
-
-```bash
-printf 'k h\nk i\nk enter\n' | nc -u -w1 192.168.1.42 9000
-```
+The minimum datagram is 3 bytes (KEY_UP) and the maximum used by v1 is 7
+bytes (PING). The 256-byte recv buffer leaves room for future opcodes.
 
 The ESP32-S3's native USB port must be connected to a host computer — that is
 the computer whose keyboard / mouse the commands control.
@@ -165,10 +137,9 @@ A thin C component that:
   `tud_hid_set_report_cb` are implemented in Rust with `#[no_mangle] extern
   "C"`. No extra C stub is needed for them.
 
-`src/protocol.rs` parses the text commands into a strongly typed `Command`
-enum. It has unit tests — run them on the host with `cargo test --target
-$(rustc -vV | grep host | cut -d' ' -f2) --lib` (the build target is
-Xtensa, tests need a host target).
+`src/protocol.rs` parses incoming datagrams into a strongly typed `Command`
+enum, no allocation, no UTF-8 work. It ships with unit tests covering header
+validation and each opcode's payload layout.
 
 `src/main.rs` wires everything together — link patches, logger, TinyUSB init,
 Wi-Fi, UDP socket, recv/dispatch loop. It contains **zero** `unsafe` blocks.
