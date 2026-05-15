@@ -1,13 +1,18 @@
 # esp32-rust-c-hid-example
 
 End-to-end example of driving a [TinyUSB](https://github.com/hathach/tinyusb) HID
-device (keyboard + mouse + media keys) on an ESP32-S3 over a plain-text TCP
-protocol. Any client that can open a TCP socket — including `nc` — can type on
+device (keyboard + mouse + media keys) on an ESP32-S3 over a plain-text UDP
+protocol. Any client that can open a UDP socket — including `nc` — can type on
 the host computer, move the mouse, and send media keys.
 
 Generated from [esp32-rust-c-template](https://github.com/Heap-Hop/esp32-rust-c-template).
 It demonstrates how to layer a hand-written, fully safe Rust API on top of a
 non-trivial remote ESP-IDF component (`espressif/esp_tinyusb`).
+
+The companion phone / desktop client is
+[Heap-Hop/local-hid](https://github.com/Heap-Hop/local-hid) — a Flutter app
+exposing a touchpad, virtual keyboard, and media keys that speak this protocol
+over UDP.
 
 ## Hardware
 
@@ -45,14 +50,14 @@ Three environment variables are read by `build.rs` and baked into the firmware:
 |------------------|----------|---------|--------------------------------------------|
 | `WIFI_SSID`      | yes      | —       | Network SSID (2.4 GHz, WPA2-Personal)      |
 | `WIFI_PASSWORD`  | no       | empty   | Leave empty for open networks              |
-| `TCP_PORT`       | no       | `9000`  | TCP port the HID command server listens on |
+| `UDP_PORT`       | no       | `9000`  | UDP port the HID command server listens on |
 
 Export them in your shell before building:
 
 ```bash
 export WIFI_SSID="my-wifi"
 export WIFI_PASSWORD="my-password"
-# export TCP_PORT=9000
+# export UDP_PORT=9000
 ```
 
 The build is cached per value — changing any of them triggers a rebuild.
@@ -67,12 +72,12 @@ The serial monitor logs the assigned IP once Wi-Fi is up:
 
 ```
 I (...) esp32_rust_c_hid_example: Wi-Fi connected: IpInfo { ip: 192.168.1.42, ... }
-I (...) esp32_rust_c_hid_example: TCP HID command server listening on 0.0.0.0:9000
+I (...) esp32_rust_c_hid_example: UDP HID command server listening on 0.0.0.0:9000
 ```
 
 ## Command protocol
 
-Send one command per line over TCP. Tokens are separated by whitespace, case
+Send one command per line over UDP. Tokens are separated by whitespace, case
 is ignored for verbs and key names, and each command replies with a single
 line starting with `ok` or `err`.
 
@@ -105,11 +110,10 @@ help                          list commands
 
 ## Testing with `nc`
 
-Open a TCP session and type commands interactively:
+Open a UDP session and type commands interactively (`-u` for UDP):
 
 ```
-$ nc 192.168.1.42 9000
-ok hello — send 'help' for commands
+$ nc -u 192.168.1.42 9000
 k a
 ok key a
 k enter
@@ -127,7 +131,7 @@ ok media playpause
 Or stream a prepared script:
 
 ```bash
-printf 'k h\nk i\nk enter\n' | nc -q1 192.168.1.42 9000
+printf 'k h\nk i\nk enter\n' | nc -u -w1 192.168.1.42 9000
 ```
 
 The ESP32-S3's native USB port must be connected to a host computer — that is
@@ -167,15 +171,14 @@ $(rustc -vV | grep host | cut -d' ' -f2) --lib` (the build target is
 Xtensa, tests need a host target).
 
 `src/main.rs` wires everything together — link patches, logger, TinyUSB init,
-Wi-Fi, TCP listener, per-client handler thread. It contains **zero** `unsafe`
-blocks.
+Wi-Fi, UDP socket, recv/dispatch loop. It contains **zero** `unsafe` blocks.
 
 ## Project layout
 
 ```
 .cargo/config.toml          target chip, linker, ESP-IDF version, BINDGEN flags
 Cargo.toml                  Rust deps + local + remote extra_components
-build.rs                    embuild output + WIFI_SSID/WIFI_PASSWORD/TCP_PORT
+build.rs                    embuild output + WIFI_SSID/WIFI_PASSWORD/UDP_PORT
 sdkconfig.defaults          stack sizes, TinyUSB HID count, partition table
 partitions.csv              custom 3 MB factory app partition
 espflash.toml               points espflash at partitions.csv
