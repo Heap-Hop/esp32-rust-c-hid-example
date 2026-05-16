@@ -1,0 +1,28 @@
+[package]
+name = "esp32-rust-c-hid-example"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[[bin]]
+name = "esp32-rust-c-hid-example"
+harness = false
+
+[dependencies]
+log = "0.4"
+anyhow = "1"
+esp-idf-sys = "0.37.2"
+esp-idf-svc = { version = "0.52.1", features = ["critical-section"] }
+
+[build-dependencies]
+embuild = "0.33"
+
+# Local C components under components/ (our TinyUSB bridge).
+[[package.metadata.esp-idf-sys.extra_components]]
+component_dirs = ["components"]
+
+# Remote ESP-IDF component pulled by idf-component-manager at build time.
+# The TinyUSB bridge requires it; the bridge CMakeLists.txt REQUIRES
+# espressif__esp_tinyusb to link against it.
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/esp_tinyusb", version = "^2.0.0" }

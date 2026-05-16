@@ -146,24 +146,34 @@ Wi-Fi, UDP socket, recv/dispatch loop. It contains **zero** `unsafe` blocks.
 
 ## Project layout
 
+The repository is a Cargo workspace. The integration binary lives under
+`crates/firmware/`; future modules (OTA, remote log, …) will land alongside as
+their own member crates.
+
 ```
+Cargo.toml                  workspace declaration, members = ["crates/*"]
 .cargo/config.toml          target chip, linker, ESP-IDF version, BINDGEN flags
-Cargo.toml                  Rust deps + local + remote extra_components
-build.rs                    embuild output + WIFI_SSID/WIFI_PASSWORD/UDP_PORT
-sdkconfig.defaults          stack sizes, TinyUSB HID count, partition table
-partitions.csv              custom 3 MB factory app partition
-espflash.toml               points espflash at partitions.csv
+rust-toolchain.toml         pins the `esp` toolchain for every member
+flash.sh, wifi.env          build-and-flash wrapper + local Wi-Fi secrets
 
-src/
-  main.rs                   application entry — no unsafe
-  tinyusb_hid.rs            FFI wrapper (the ONLY unsafe in the project)
-  protocol.rs               text command parser + HID usage tables
+crates/
+  firmware/                 the HID UDP server binary
+    Cargo.toml              package + extra_components metadata
+    build.rs                embuild output + WIFI_SSID/WIFI_PASSWORD/UDP_PORT
+    sdkconfig.defaults      stack sizes, TinyUSB HID count, partition table
+    partitions.csv          custom 3 MB factory app partition
+    espflash.toml           points espflash at partitions.csv
 
-components/
-  tinyusb_bridge/
-    CMakeLists.txt          requires espressif__esp_tinyusb
-    include/tinyusb_bridge.h
-    tinyusb_bridge.c        HID descriptor + submission helpers
+    src/
+      main.rs               application entry — no unsafe
+      tinyusb_hid.rs        FFI wrapper (the ONLY unsafe in the project)
+      protocol.rs           binary wire format parser
+
+    components/
+      tinyusb_bridge/
+        CMakeLists.txt      requires espressif__esp_tinyusb
+        include/tinyusb_bridge.h
+        tinyusb_bridge.c    HID descriptor + submission helpers
 ```
 
 ## Troubleshooting
@@ -179,8 +189,8 @@ not mounted yet. Wait a few seconds after boot, or re-plug the USB cable.
 **`WIFI_SSID must be set before building firmware` at compile time.** Export
 the env var in your shell and re-run `cargo build`.
 
-**C source changes in `components/` not picked up.** Cargo tracks build script
-inputs, not C files directly. Force a re-run with:
+**C source changes in `crates/firmware/components/` not picked up.** Cargo
+tracks build script inputs, not C files directly. Force a re-run with:
 
 ```bash
 rm target/xtensa-esp32s3-espidf/release/build/esp-idf-sys-*/output

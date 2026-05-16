@@ -21,4 +21,9 @@ if ! rustc -Vv 2>/dev/null | grep -q xtensa; then
     fi
 fi
 
+# The firmware lives in the `firmware` member crate. espflash reads
+# espflash.toml from the current directory, and the partition relative path
+# baked into Cargo metadata is resolved from the member's manifest dir, so
+# run cargo from inside crates/firmware/.
+cd crates/firmware
 exec cargo espflash flash --release --monitor "$@"

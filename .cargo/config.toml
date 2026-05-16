@@ -17,8 +17,10 @@ ESP_IDF_TOOLS_INSTALL_DIR = "global"
 
 # Copy the custom partition table into the esp-idf build output directory
 # (required because CONFIG_PARTITION_TABLE_CUSTOM_FILENAME resolves relative
-# to that output dir, not the project root).
-ESP_IDF_GLOB_FIRMWARE_BASE = { value = "", relative = true }
+# to that output dir, not the project root). BASE is resolved relative to
+# this config.toml (the workspace root); the firmware crate lives under
+# crates/firmware/.
+ESP_IDF_GLOB_FIRMWARE_BASE = { value = "crates/firmware", relative = true }
 ESP_IDF_GLOB_FIRMWARE_PARTITIONS = "partitions.csv"
 
 # When espressif/esp_tinyusb is added as a remote component, esp-idf-sys
