@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
+use esp_idf_svc::mdns::EspMdns;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::wifi::{
     AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi,
@@ -27,6 +28,7 @@ use esp_idf_svc::wifi::{
 mod protocol;
 mod tinyusb_hid;
 
+use esp_remote_log::{LogTarget, init as init_remote_log};
 use protocol::{Command, MAX_REPLY_LEN, ParseError};
 
 // Baked-in build-time configuration (see build.rs).
@@ -39,6 +41,15 @@ const TAP_HOLD: Duration = Duration::from_millis(12);
 /// Largest datagram we accept. Anything beyond is silently truncated by the
 /// kernel; we just use a generous local buffer.
 const MAX_DATAGRAM_BYTES: usize = 256;
+/// UDP port the remote-log broadcaster blasts ESP-IDF log lines on.
+const REMOTE_LOG_PORT: u16 = 9001;
+
+/// Service / instance name advertised over mDNS. Clients can reach the board
+/// at `<MDNS_INSTANCE>.local` and discover the HID UDP port via the
+/// `_local-hid._udp` TXT records.
+const MDNS_INSTANCE_BASE: &str = "local-hid";
+const MDNS_SERVICE_TYPE: &str = "_local-hid";
+const MDNS_PROTOCOL: &str = "_udp";
 
 fn main() -> anyhow::Result<()> {
     // Required ESP-IDF setup — always before anything else.
@@ -63,7 +74,60 @@ fn main() -> anyhow::Result<()> {
     // Keep the Wi-Fi guard alive for the whole program.
     let _wifi = connect_wifi(peripherals, sysloop, nvs)?;
 
+    // Now that we have a network stack, start the TCP log server and
+    // advertise ourselves over mDNS. Each is best-effort: if either fails,
+    // the HID server still comes up.
+    if let Err(error) = init_remote_log(LogTarget::TcpServer {
+        port: REMOTE_LOG_PORT,
+        buffer_bytes: 16 * 1024,
+    }) {
+        log::warn!("remote log init failed: {error}");
+    }
+
+    // Keep the mDNS handle alive for the whole program — dropping it
+    // would unregister the service.
+    let _mdns = match start_mdns(udp_port) {
+        Ok(mdns) => Some(mdns),
+        Err(error) => {
+            log::warn!("mDNS registration failed: {error}");
+            None
+        }
+    };
+
     run_udp_server(udp_port)
+}
+
+/// Register `<MDNS_INSTANCE_BASE>-<mac4>.local` and a service record for the
+/// HID UDP server so clients can discover the board without knowing its IP.
+fn start_mdns(udp_port: u16) -> anyhow::Result<EspMdns> {
+    let mut mdns = EspMdns::take()?;
+
+    // Build a stable per-device hostname using the last two bytes of the
+    // STA MAC. Without this every board on the network would compete for
+    // `local-hid.local`.
+    let mac = esp_idf_svc::hal::sys::esp_efuse_mac_get_default;
+    let mut bytes = [0u8; 6];
+    // SAFETY: the function fills exactly 6 bytes.
+    let err = unsafe { mac(bytes.as_mut_ptr()) };
+    if err != esp_idf_sys::ESP_OK {
+        anyhow::bail!("esp_efuse_mac_get_default failed: {err}");
+    }
+    let hostname = format!("{MDNS_INSTANCE_BASE}-{:02x}{:02x}", bytes[4], bytes[5]);
+
+    mdns.set_hostname(&hostname)?;
+    mdns.set_instance_name(&hostname)?;
+    mdns.add_service(
+        None,
+        MDNS_SERVICE_TYPE,
+        MDNS_PROTOCOL,
+        udp_port,
+        &[("version", "1"), ("log_port", &REMOTE_LOG_PORT.to_string())],
+    )?;
+    log::info!(
+        "mDNS: {hostname}.local advertising {MDNS_SERVICE_TYPE}{MDNS_PROTOCOL} on port {udp_port}"
+    );
+
+    Ok(mdns)
 }
 
 fn connect_wifi(

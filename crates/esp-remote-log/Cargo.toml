@@ -1,0 +1,10 @@
+[package]
+name = "esp-remote-log"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Stream ESP-IDF log output over UDP. Drop-in vprintf hook with a UDP broadcast / unicast sink."
+
+[dependencies]
+log = "0.4"
+esp-idf-sys = "0.37.2"

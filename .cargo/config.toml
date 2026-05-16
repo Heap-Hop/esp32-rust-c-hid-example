@@ -15,6 +15,17 @@ MCU = "esp32s3"
 ESP_IDF_VERSION = "v5.5.3"
 ESP_IDF_TOOLS_INSTALL_DIR = "global"
 
+# In a Cargo workspace esp-idf-sys can't infer which member crate's
+# `[package.metadata.esp-idf-sys.extra_components]` it should honour, so the
+# extra_components list comes back empty. Naming the firmware crate
+# explicitly makes the build script pick up its metadata.
+ESP_IDF_SYS_ROOT_CRATE = "esp32-rust-c-hid-example"
+
+# Path to sdkconfig.defaults, resolved from this config.toml (workspace root).
+# The relative path in `[package.metadata.esp-idf-sys]` doesn't get applied
+# from the workspace root, so override via env to be sure.
+ESP_IDF_SDKCONFIG_DEFAULTS = { value = "crates/firmware/sdkconfig.defaults", relative = true }
+
 # Copy the custom partition table into the esp-idf build output directory
 # (required because CONFIG_PARTITION_TABLE_CUSTOM_FILENAME resolves relative
 # to that output dir, not the project root). BASE is resolved relative to

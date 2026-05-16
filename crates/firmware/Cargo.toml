@@ -13,9 +13,16 @@ log = "0.4"
 anyhow = "1"
 esp-idf-sys = "0.37.2"
 esp-idf-svc = { version = "0.52.1", features = ["critical-section"] }
+esp-remote-log = { path = "../esp-remote-log" }
 
 [build-dependencies]
 embuild = "0.33"
+
+# In a Cargo workspace embuild doesn't auto-pick up `sdkconfig.defaults`
+# next to this Cargo.toml; point at it explicitly so options like
+# CONFIG_TINYUSB_HID_COUNT=1 actually land in the generated sdkconfig.
+[package.metadata.esp-idf-sys]
+esp_idf_sdkconfig_defaults = ["sdkconfig.defaults"]
 
 # Local C components under components/ (our TinyUSB bridge).
 [[package.metadata.esp-idf-sys.extra_components]]
@@ -26,3 +33,9 @@ component_dirs = ["components"]
 # espressif__esp_tinyusb to link against it.
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "espressif/esp_tinyusb", version = "^2.0.0" }
+
+# mDNS lives outside the IDF tree in v5+; the managed component pulls it in
+# and exposes `esp_idf_comp_espressif__mdns_enabled`, which unlocks
+# `esp_idf_svc::mdns`.
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/mdns", version = "^1.2.0" }
